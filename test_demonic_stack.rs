@@ -6,6 +6,7 @@
 #![feature(const_trait_impl)]
 use std::ptr::null;
 use std::ptr::addr_of_mut;
+use std::ffi::c_void;
 
 const STACK_DEPTH: usize = 15;
 type PtrId = u32;
@@ -131,10 +132,10 @@ fn new_mutable_raw<U>(loc: *const U, kind: PointerValueKind, tag: PtrId) -> PtrI
     0
 }
 
-static mut X__POINTER: *const i32 = null();
+static mut X__POINTER: *const c_void = null();
 static mut X__POINTER_KIND: PointerValueKind = 0;
 static mut X__ID: PtrId = 0;
-static mut Y__POINTER: *const i32 = null();
+static mut Y__POINTER: *const c_void = null();
 static mut Y__POINTER_KIND: PointerValueKind = 0;
 static mut Y__ID: PtrId = 0;
 
@@ -165,7 +166,7 @@ fn example1(x: &mut i32, y: &mut i32) -> i32 {
 #[kani::proof]
 fn main() {
     let mut local = 5;
-    let local__pointer = &local as *const i32;
+    let local__pointer = &local as *const _ as *const c_void;
     let local__pointer_kind = KIND_IDENTIFIED;
     let local__id = push_unique(local__pointer);
 
@@ -174,21 +175,21 @@ fn main() {
     let temporary_ref__pointer_kind = KIND_IDENTIFIED;
     let temporary_ref__id = new_mutable_ref(local__pointer, local__pointer_kind, local__id);
 
-    let raw_pointer__pointer = &local as *const i32;
+    let raw_pointer__pointer = &local as *const _ as *const c_void;
     let raw_pointer__pointer_kind = KIND_NONE;
     let raw_pointer__id = new_mutable_raw(temporary_ref__pointer, temporary_ref__pointer_kind, temporary_ref__id);
 
     let x__pointer = unsafe { &mut *addr_of_mut!(X__POINTER) };
     let x__pointer_kind = unsafe { &mut *addr_of_mut!(X__POINTER_KIND) };
     let x__id = unsafe { &mut *addr_of_mut!(X__ID) };
-    *x__pointer = &local as *const i32;
+    *x__pointer = &local as *const _ as *const c_void;
     *x__pointer_kind = KIND_IDENTIFIED;
     *x__id = new_mutable_ref(raw_pointer__pointer, raw_pointer__pointer_kind, raw_pointer__id);
 
     let y__pointer = unsafe { &mut *addr_of_mut!(Y__POINTER) };
     let y__pointer_kind = unsafe { &mut *addr_of_mut!(Y__POINTER_KIND) };
     let y__id = unsafe { &mut *addr_of_mut!(Y__ID) };
-    *y__pointer = &local as *const i32;
+    *y__pointer = &local as *const _ as *const c_void;
     *y__pointer_kind = KIND_IDENTIFIED;
     *y__id = new_mutable_ref(raw_pointer__pointer, raw_pointer__pointer_kind, raw_pointer__id);
 

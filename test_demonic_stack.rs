@@ -5,11 +5,9 @@
 #![allow(non_snake_case)]
 #![feature(const_trait_impl)]
 use std::ptr::null;
-use std::ptr::addr_of_mut;
-use std::ffi::c_void;
 
 const STACK_DEPTH: usize = 15;
-type PtrId = u32;
+type PointerId = u32;
 type StackItemKind = u32;
 
 const KIND_UNIQUE: StackItemKind = 0;
@@ -20,77 +18,79 @@ const KIND_IDENTIFIED : StackItemKind = 0;
 const KIND_NONE: StackItemKind = 1;
 
 
-#[allow(unused)]
-fn pointer_object<U: Sized>(ptr: *const U) -> usize {
-    kani::mem::pointer_object(ptr)
-}
-
-#[allow(unused)]
-fn pointer_offset<U: Sized>(ptr: *const U) -> usize {
-    kani::mem::pointer_offset(ptr)
-}
-
 fn demonic_nondet() -> bool {
     kani::any::<bool>()
 }
 
-static mut SSTATE_MONITOR_OBJECT: usize = 0;
+static mut SSTATE_MONITOR_OBJECT: *const u8 = null();
 static mut SSTATE_MONITOR_OFFSET: usize = 0;
 static mut SSTATE_MONITOR_ON: bool = false;
-static mut SSTATE_STACK_IDS: [PtrId; STACK_DEPTH] = [0; STACK_DEPTH];
+static mut SSTATE_STACK_IDS: [PointerId; STACK_DEPTH] = [0; STACK_DEPTH];
 static mut SSTATE_STACK_KINDS: [StackItemKind; STACK_DEPTH] = [0; STACK_DEPTH];
 static mut SSTATE_STACK_TOPS: usize = 0;
-static mut SSTATE_NEXT_PTR_ID: PtrId = 0;
+static mut SSTATE_NEXT_PTR_ID: PointerId = 0;
 
-pub fn push_shared<U>(ptr: *const U) {
+pub fn push_shared<U>(ptr: *const U, offset: usize, size: usize) {
+    assert!(offset < size);
     unsafe {
-        let obj = pointer_object(ptr);
-        let offset = pointer_offset(ptr);
         // switch monitor to this one
-        if demonic_nondet() {
-            SSTATE_MONITOR_OBJECT = obj;
-            SSTATE_MONITOR_OFFSET = offset;
-            SSTATE_MONITOR_OBJECT = obj;
-            SSTATE_MONITOR_ON = true;
+        {
+            if demonic_nondet() {
+                SSTATE_MONITOR_OBJECT = ptr as *const _ as *const u8;
+                SSTATE_MONITOR_ON = true;
+                let mut i = offset;
+                let mut target = offset;
+                while i < size { if demonic_nondet() { target = i }; i += 1; }
+                SSTATE_MONITOR_OFFSET = target;
+            }
         }
-        if SSTATE_MONITOR_OBJECT == obj && SSTATE_MONITOR_OFFSET == offset && SSTATE_MONITOR_ON {
-            let top = SSTATE_STACK_TOPS;
-            assert!(top < STACK_DEPTH);
-            SSTATE_STACK_TOPS += 1;
+        {
+            let mut i = 0;
+            while i < size {
+                if SSTATE_MONITOR_OBJECT == (ptr as *const _ as *const u8) && SSTATE_MONITOR_OFFSET == i &&
+                    SSTATE_MONITOR_ON {
+                    let top = SSTATE_STACK_TOPS;
+                    assert!(top < STACK_DEPTH);
+                    SSTATE_STACK_TOPS += 1;
+                }
+                i += 1;
+            }
         }
     }
 }
 
-pub fn push_unique<U>(ptr: *const U) -> PtrId {
+pub fn push_unique<U>(ptr: *const U, size: usize) -> PointerId {
     unsafe {
-        let obj = pointer_object(ptr);
-        let offset = pointer_offset(ptr);
-        if demonic_nondet() {
-            SSTATE_MONITOR_OBJECT = obj;
-            SSTATE_MONITOR_OFFSET = offset;
-            SSTATE_MONITOR_ON = true;
+        {
+            if demonic_nondet() {
+                SSTATE_MONITOR_OBJECT = ptr as *const _ as *const u8;
+                SSTATE_MONITOR_ON = true;
+                let mut i = 0;
+                let mut offset = 0;
+                while i < size { if demonic_nondet() { offset = i }; i += 1; }
+                SSTATE_MONITOR_OFFSET = offset;
+            }
         }
-        if  SSTATE_MONITOR_OBJECT == obj && SSTATE_MONITOR_OFFSET == offset && SSTATE_MONITOR_ON  {
-            let top = SSTATE_STACK_TOPS;
-            assert!(top < STACK_DEPTH);
-            SSTATE_STACK_KINDS[top] = KIND_UNIQUE;
+        {
             let ptr_id_old = SSTATE_NEXT_PTR_ID;
-            SSTATE_STACK_IDS[top] = ptr_id_old;
-            SSTATE_STACK_TOPS += 1;
-            SSTATE_NEXT_PTR_ID += 1;
+            if SSTATE_MONITOR_OBJECT == (ptr as *const _ as *const u8) &&
+                SSTATE_MONITOR_OFFSET < size && SSTATE_MONITOR_ON  {
+                        let top = SSTATE_STACK_TOPS;
+                        assert!(top < STACK_DEPTH);
+                        SSTATE_STACK_KINDS[top] = KIND_UNIQUE;
+                        SSTATE_STACK_IDS[top] = ptr_id_old;
+                        SSTATE_STACK_TOPS += 1;
+                        SSTATE_NEXT_PTR_ID += 1;
+            }
             ptr_id_old
-        } else {
-            0
         }
     }
 }
 
-fn use_2<U>(ptr: *const U, kind: PointerValueKind, id: PtrId) {
+fn use_2<U>(ptr: *const U, offset: usize, size: usize, kind: PointerValueKind, id: PointerId) {
     unsafe {
-        let obj = pointer_object(ptr);
-        let offset = pointer_offset(ptr);
-
-        if SSTATE_MONITOR_OBJECT == obj && SSTATE_MONITOR_OFFSET == offset && SSTATE_MONITOR_ON {
+        if SSTATE_MONITOR_OBJECT == (ptr as *const _ as *const u8) && offset < SSTATE_MONITOR_OFFSET && SSTATE_MONITOR_OFFSET < size &&
+            SSTATE_MONITOR_ON {
             let top = SSTATE_STACK_TOPS;
             let mut found = false;
             if kind == KIND_IDENTIFIED {
@@ -121,77 +121,173 @@ fn use_2<U>(ptr: *const U, kind: PointerValueKind, id: PtrId) {
     }
 }
 
-fn new_mutable_ref<U>(loc: *const U, kind: PointerValueKind, tag: PtrId) -> PtrId {
-    use_2(loc, kind, tag);
-    push_unique(loc)
+fn new_mutable_ref<U>(loc: *const U, size: usize, kind: PointerValueKind, tag: PointerId) -> PointerId {
+    use_2(loc, 0, size, kind, tag);
+    push_unique(loc, size)
 }
 
-fn new_mutable_raw<U>(loc: *const U, kind: PointerValueKind, tag: PtrId) -> PtrId {
-    use_2(loc, kind, tag);
-    push_shared(loc);
+fn new_mutable_raw<U>(loc: *const U, offset: usize, size: usize, kind: PointerValueKind, tag: PointerId) -> PointerId {
+    use_2(loc, offset, size, kind, tag);
+    push_shared(loc, offset, size);
     0
 }
 
-static mut X__POINTER: *const c_void = null();
-static mut X__POINTER_KIND: PointerValueKind = 0;
-static mut X__ID: PtrId = 0;
-static mut Y__POINTER: *const c_void = null();
-static mut Y__POINTER_KIND: PointerValueKind = 0;
-static mut Y__ID: PtrId = 0;
+static mut PARAM_1__POINTER: *const u8 = null();
+static mut PARAM_1__POINTER_OFFSET: usize = 0;
+static mut PARAM_1__POINTER_SIZE: usize = 0;
+static mut PARAM_1__POINTER_KIND: PointerValueKind = 0;
+static mut PARAM_1__TAG: PointerId = 0;
+static mut PARAM_2__POINTER: *const u8 = null();
+static mut PARAM_2__POINTER_OFFSET: usize = 0;
+static mut PARAM_2__POINTER_SIZE: usize = 0;
+static mut PARAM_2__POINTER_KIND: PointerValueKind = 0;
+static mut PARAM_2__TAG: PointerId = 0;
+
+fn get_param_1__pointer() -> *const u8 {
+    unsafe { PARAM_1__POINTER }
+}
+
+fn get_param_1__pointer_offset() -> usize {
+    unsafe { PARAM_1__POINTER_OFFSET }
+}
+
+fn get_param_1__pointer_size() -> usize {
+    unsafe { PARAM_1__POINTER_SIZE }
+}
+
+fn set_param_1__pointer(v: *const u8) {
+    unsafe { PARAM_1__POINTER = v };
+}
+
+fn set_param_1__pointer_offset(v: usize) {
+    unsafe { PARAM_1__POINTER_OFFSET = v };
+}
+
+fn set_param_1__pointer_size(v: usize) {
+    unsafe { PARAM_1__POINTER_SIZE = v };
+}
+
+fn get_param_1__pointer_kind() -> PointerValueKind {
+    unsafe { PARAM_1__POINTER_KIND }
+}
+
+fn set_param_1__pointer_kind(v: PointerValueKind) {
+    unsafe { PARAM_1__POINTER_KIND = v };
+}
+
+fn get_param_1__tag() -> PointerId {
+    unsafe { PARAM_1__TAG }
+}
+
+fn set_param_1__tag(v: PointerId) {
+    unsafe { PARAM_1__TAG = v }
+}
+
+fn get_param_2__pointer() -> *const u8 {
+    unsafe { PARAM_2__POINTER }
+}
+
+fn get_param_2__pointer_offset() -> usize {
+    unsafe { PARAM_2__POINTER_OFFSET }
+}
+
+fn get_param_2__pointer_size() -> usize {
+    unsafe { PARAM_2__POINTER_SIZE }
+}
+
+fn set_param_2__pointer(v: *const u8) {
+    unsafe { PARAM_2__POINTER = v };
+}
+
+fn set_param_2__pointer_offset(v: usize) {
+    unsafe { PARAM_2__POINTER_OFFSET = v };
+}
+
+fn set_param_2__pointer_size(v: usize) {
+    unsafe { PARAM_2__POINTER_SIZE = v };
+}
+
+fn get_param_2__pointer_kind() -> PointerValueKind {
+    unsafe { PARAM_2__POINTER_KIND }
+}
+
+fn set_param_2__pointer_kind(v: PointerValueKind) {
+    unsafe { PARAM_2__POINTER_KIND = v }
+}
+
+fn get_param_2__tag() -> PointerId {
+    unsafe { PARAM_2__TAG }
+}
+
+fn set_param_2__tag(v: PointerId) {
+    unsafe { PARAM_2__TAG = v };
+}
 
 fn example1(x: &mut i32, y: &mut i32) -> i32 {
-    let x__pointer = unsafe { &mut *addr_of_mut!(X__POINTER) };
-    let x__pointer_kind = unsafe { &mut *addr_of_mut!(X__POINTER_KIND) };
-    let x__id = unsafe { &mut *addr_of_mut!(X__ID) };
-    let y__pointer = unsafe { &mut *addr_of_mut!(Y__POINTER) };
-    let y__pointer_kind = unsafe { &mut *addr_of_mut!(Y__POINTER_KIND) };
-    let y__id = unsafe { &mut *addr_of_mut!(Y__ID) };
+    let x__pointer = get_param_1__pointer();
+    let x__pointer_offset = get_param_1__pointer_offset();
+    let x__pointer_size = get_param_1__pointer_size();
+    let x__pointer_kind = get_param_1__pointer_kind();
+    let x__tag = get_param_1__tag();
+    let y__pointer = get_param_2__pointer();
+    let y__pointer_offset= get_param_2__pointer_offset();
+    let y__pointer_size = get_param_2__pointer_size();
+    let y__pointer_kind = get_param_2__pointer_kind();
+    let y__tag = get_param_2__tag();
 
     let x_rename = &mut *x;
     let x_rename__pointer = x__pointer.clone();
+    let x_rename__pointer_offset = x__pointer_offset;
+    let x_rename__pointer_size = x__pointer_size;
     let x_rename__pointer_kind = KIND_IDENTIFIED;
-    let x_rename__pointer_id = new_mutable_ref(*x__pointer, *x__pointer_kind, *x__id);
+    let x_rename__pointer_id = new_mutable_ref(x__pointer, x__pointer_size, x__pointer_kind, x__tag);
 
     let y_rename = &mut *y;
     let y_rename__pointer = y__pointer.clone();
+    let y_rename__pointer_offset = y__pointer_offset;
+    let y_rename__pointer_size = y__pointer_size;
     let y_rename__pointer_kind = KIND_IDENTIFIED;
-    let y_rename__pointer_id = new_mutable_ref(*y__pointer, *y__pointer_kind, *y__id);
+    let y_rename__pointer_id = new_mutable_ref(y__pointer, x__pointer_size, y__pointer_kind, y__tag);
     *x_rename = 42;
-    use_2(x_rename__pointer, x_rename__pointer_kind, x_rename__pointer_id);
+    use_2(x_rename__pointer, x_rename__pointer_offset, x_rename__pointer_size, x_rename__pointer_kind, x_rename__pointer_id);
     *y_rename = 13;
-    use_2(y_rename__pointer, y_rename__pointer_kind, y_rename__pointer_id);
+    use_2(y_rename__pointer, y_rename__pointer_offset, y_rename__pointer_size, y_rename__pointer_kind, y_rename__pointer_id);
     *x
 }
 
 #[kani::proof]
 fn main() {
     let mut local = 5;
-    let local__pointer = &local as *const _ as *const c_void;
+    let local__size = std::mem::size_of_val(&local);
+    let _local__offset = 0;
+    let local__pointer = &local as *const _ as *const u8;
     let local__pointer_kind = KIND_IDENTIFIED;
-    let local__id = push_unique(local__pointer);
+    let local__tag = push_unique(local__pointer, local__size);
 
     let raw_pointer = &mut local as *mut i32;
-    let temporary_ref__pointer = &local as *const i32;
+    let _temporary_ref__size = std::mem::size_of_val(&local);
+    let _temporary_ref__offset = 0;
+    let temporary_ref__pointer = &local as *const _ as *const u8;
     let temporary_ref__pointer_kind = KIND_IDENTIFIED;
-    let temporary_ref__id = new_mutable_ref(local__pointer, local__pointer_kind, local__id);
+    let temporary_ref__tag = new_mutable_ref(local__pointer, local__size, local__pointer_kind, local__tag);
 
-    let raw_pointer__pointer = &local as *const _ as *const c_void;
+    let raw_pointer__pointer = &local as *const _ as *const u8;
+    let raw_pointer__size = std::mem::size_of_val(&local);
+    let raw_pointer__offset = 0;
     let raw_pointer__pointer_kind = KIND_NONE;
-    let raw_pointer__id = new_mutable_raw(temporary_ref__pointer, temporary_ref__pointer_kind, temporary_ref__id);
+    let raw_pointer__tag = new_mutable_raw(temporary_ref__pointer, raw_pointer__offset, raw_pointer__size, temporary_ref__pointer_kind, temporary_ref__tag);
 
-    let x__pointer = unsafe { &mut *addr_of_mut!(X__POINTER) };
-    let x__pointer_kind = unsafe { &mut *addr_of_mut!(X__POINTER_KIND) };
-    let x__id = unsafe { &mut *addr_of_mut!(X__ID) };
-    *x__pointer = &local as *const _ as *const c_void;
-    *x__pointer_kind = KIND_IDENTIFIED;
-    *x__id = new_mutable_ref(raw_pointer__pointer, raw_pointer__pointer_kind, raw_pointer__id);
+    set_param_1__pointer(&local as *const _ as *const u8);
+    set_param_1__pointer_size(raw_pointer__size);
+    set_param_1__pointer_offset(raw_pointer__offset);
+    set_param_1__pointer_kind(KIND_IDENTIFIED);
+    set_param_1__tag(new_mutable_ref(raw_pointer__pointer, raw_pointer__size, raw_pointer__pointer_kind, raw_pointer__tag));
 
-    let y__pointer = unsafe { &mut *addr_of_mut!(Y__POINTER) };
-    let y__pointer_kind = unsafe { &mut *addr_of_mut!(Y__POINTER_KIND) };
-    let y__id = unsafe { &mut *addr_of_mut!(Y__ID) };
-    *y__pointer = &local as *const _ as *const c_void;
-    *y__pointer_kind = KIND_IDENTIFIED;
-    *y__id = new_mutable_ref(raw_pointer__pointer, raw_pointer__pointer_kind, raw_pointer__id);
+    set_param_2__pointer(&local as *const _ as *const u8);
+    set_param_2__pointer_size(raw_pointer__size);
+    set_param_2__pointer_offset(raw_pointer__offset);
+    set_param_2__pointer_kind(KIND_IDENTIFIED);
+    set_param_2__tag(new_mutable_ref(raw_pointer__pointer, raw_pointer__size, raw_pointer__pointer_kind, raw_pointer__tag));
 
     let result = unsafe {
         example1(&mut *raw_pointer,

@@ -4,6 +4,8 @@
 // Basic test from the stacked borrows paper
 #![allow(non_snake_case)]
 #![feature(const_trait_impl)]
+#![cfg_attr(not(kani), feature(register_tool))]
+#![cfg_attr(not(kani), register_tool(kani))]
 use std::ptr::null;
 
 const STACK_DEPTH: usize = 15;
@@ -17,9 +19,25 @@ type PointerValueKind = u32;
 const KIND_IDENTIFIED : StackItemKind = 0;
 const KIND_NONE: StackItemKind = 1;
 
-
+#[cfg(any(kani))]
 fn demonic_nondet() -> bool {
     kani::any::<bool>()
+}
+
+#[cfg(not(kani))]
+fn demonic_nondet() -> bool {
+    true
+}
+
+
+#[cfg(any(kani))]
+fn same_pointer<T, U>(ptr1: *const T, ptr2: *const U) -> bool {
+    kani::mem::pointer_object(ptr1) == kani::mem::pointer_object(ptr2)
+}
+
+#[cfg(not(kani))]
+fn same_pointer<T, U>(ptr1: *const T, ptr2: *const U) -> bool {
+    (ptr1 as *const _ as *const u8) == (ptr2 as *const _ as *const u8)
 }
 
 static mut SSTATE_MONITOR_OBJECT: *const u8 = null();
@@ -45,15 +63,10 @@ pub fn push_shared<U>(ptr: *const U, offset: usize, size: usize) {
             }
         }
         {
-            let mut i = 0;
-            while i < size {
-                if SSTATE_MONITOR_OBJECT == (ptr as *const _ as *const u8) && SSTATE_MONITOR_OFFSET == i &&
-                    SSTATE_MONITOR_ON {
+            if same_pointer(SSTATE_MONITOR_OBJECT, ptr) && offset <= SSTATE_MONITOR_OFFSET && SSTATE_MONITOR_OFFSET < size && SSTATE_MONITOR_ON {
                     let top = SSTATE_STACK_TOPS;
                     assert!(top < STACK_DEPTH);
                     SSTATE_STACK_TOPS += 1;
-                }
-                i += 1;
             }
         }
     }
@@ -73,8 +86,8 @@ pub fn push_unique<U>(ptr: *const U, size: usize) -> PointerId {
         }
         {
             let ptr_id_old = SSTATE_NEXT_PTR_ID;
-            if SSTATE_MONITOR_OBJECT == (ptr as *const _ as *const u8) &&
-                SSTATE_MONITOR_OFFSET < size && SSTATE_MONITOR_ON  {
+            if same_pointer(SSTATE_MONITOR_OBJECT, ptr) &&
+               SSTATE_MONITOR_OFFSET < size && SSTATE_MONITOR_ON  {
                         let top = SSTATE_STACK_TOPS;
                         assert!(top < STACK_DEPTH);
                         SSTATE_STACK_KINDS[top] = KIND_UNIQUE;
@@ -89,7 +102,7 @@ pub fn push_unique<U>(ptr: *const U, size: usize) -> PointerId {
 
 fn use_2<U>(ptr: *const U, offset: usize, size: usize, kind: PointerValueKind, id: PointerId) {
     unsafe {
-        if SSTATE_MONITOR_OBJECT == (ptr as *const _ as *const u8) && offset < SSTATE_MONITOR_OFFSET && SSTATE_MONITOR_OFFSET < size &&
+        if same_pointer(SSTATE_MONITOR_OBJECT, ptr) && offset < SSTATE_MONITOR_OFFSET && SSTATE_MONITOR_OFFSET < size &&
             SSTATE_MONITOR_ON {
             let top = SSTATE_STACK_TOPS;
             let mut found = false;
@@ -116,7 +129,7 @@ fn use_2<U>(ptr: *const U, offset: usize, size: usize, kind: PointerValueKind, i
                 }
                 SSTATE_STACK_TOPS = new_top;
             }
-            assert!(found);
+            assert!(found, "Stack violated.");
         }
     }
 }

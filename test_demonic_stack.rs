@@ -1,6 +1,8 @@
 // Copyright Jacob Salzberg
 // SPDX-License-Identifier: Apache-2.0
 
+// TODO: Check that pointer object is not lost through pointer casts.
+
 // Basic test from the stacked borrows paper
 #![allow(non_snake_case)]
 #![feature(const_trait_impl)]
@@ -168,8 +170,8 @@ fn get_param_1__pointer_size() -> usize {
     unsafe { PARAM_1__POINTER_SIZE }
 }
 
-fn set_param_1__pointer(v: *const u8) {
-    unsafe { PARAM_1__POINTER = v };
+fn set_param_1__pointer<T>(v: *const T) {
+    unsafe { PARAM_1__POINTER = v as *const _ as *const u8 };
 }
 
 fn set_param_1__pointer_offset(v: usize) {
@@ -208,8 +210,8 @@ fn get_param_2__pointer_size() -> usize {
     unsafe { PARAM_2__POINTER_SIZE }
 }
 
-fn set_param_2__pointer(v: *const u8) {
-    unsafe { PARAM_2__POINTER = v };
+fn set_param_2__pointer<T>(v: *const T) {
+    unsafe { PARAM_2__POINTER = v as *const _ as *const u8 };
 }
 
 fn set_param_2__pointer_offset(v: usize) {
@@ -273,30 +275,34 @@ fn main() {
     let mut local = 5;
     let local__size = std::mem::size_of_val(&local);
     let _local__offset = 0;
-    let local__pointer = &local as *const _ as *const u8;
+    let local__pointer = &local as *const i32;
+    // Steps involved in creating pointer:
+    // create a ref to a local,
+    // create a raw pointer to the ref,
+    // create the pointer to this.
     let local__pointer_kind = KIND_IDENTIFIED;
     let local__tag = push_unique(local__pointer, local__size);
 
     let raw_pointer = &mut local as *mut i32;
     let _temporary_ref__size = std::mem::size_of_val(&local);
     let _temporary_ref__offset = 0;
-    let temporary_ref__pointer = &local as *const _ as *const u8;
+    let temporary_ref__pointer = &local as *const i32;
     let temporary_ref__pointer_kind = KIND_IDENTIFIED;
     let temporary_ref__tag = new_mutable_ref(local__pointer, local__size, local__pointer_kind, local__tag);
 
-    let raw_pointer__pointer = &local as *const _ as *const u8;
+    let raw_pointer__pointer = &local as *const i32;
     let raw_pointer__size = std::mem::size_of_val(&local);
     let raw_pointer__offset = 0;
     let raw_pointer__pointer_kind = KIND_NONE;
     let raw_pointer__tag = new_mutable_raw(temporary_ref__pointer, raw_pointer__offset, raw_pointer__size, temporary_ref__pointer_kind, temporary_ref__tag);
 
-    set_param_1__pointer(&local as *const _ as *const u8);
+    set_param_1__pointer(&local);
     set_param_1__pointer_size(raw_pointer__size);
     set_param_1__pointer_offset(raw_pointer__offset);
     set_param_1__pointer_kind(KIND_IDENTIFIED);
     set_param_1__tag(new_mutable_ref(raw_pointer__pointer, raw_pointer__size, raw_pointer__pointer_kind, raw_pointer__tag));
 
-    set_param_2__pointer(&local as *const _ as *const u8);
+    set_param_2__pointer(&local);
     set_param_2__pointer_size(raw_pointer__size);
     set_param_2__pointer_offset(raw_pointer__offset);
     set_param_2__pointer_kind(KIND_IDENTIFIED);

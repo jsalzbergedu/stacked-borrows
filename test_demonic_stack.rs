@@ -270,11 +270,15 @@ fn example1(x: &mut i32, y: &mut i32) -> i32 {
     *x
 }
 
+fn zero_usize() -> usize {
+    0
+}
+
 #[kani::proof]
 fn main() {
     let mut local = 5;
     let local__size = std::mem::size_of_val(&local);
-    let _local__offset = 0;
+    let _local__offset = zero_usize();
     let local__pointer = &local as *const i32;
     // Steps involved in creating pointer:
     // create a ref to a local,
@@ -285,14 +289,14 @@ fn main() {
 
     let raw_pointer = &mut local as *mut i32;
     let _temporary_ref__size = std::mem::size_of_val(&local);
-    let _temporary_ref__offset = 0;
+    let _temporary_ref__offset = zero_usize();
     let temporary_ref__pointer = &local as *const i32;
     let temporary_ref__pointer_kind = KIND_IDENTIFIED;
     let temporary_ref__tag = new_mutable_ref(local__pointer, local__size, local__pointer_kind, local__tag);
 
     let raw_pointer__pointer = &local as *const i32;
     let raw_pointer__size = std::mem::size_of_val(&local);
-    let raw_pointer__offset = 0;
+    let raw_pointer__offset = zero_usize();
     let raw_pointer__pointer_kind = KIND_NONE;
     let raw_pointer__tag = new_mutable_raw(temporary_ref__pointer, raw_pointer__offset, raw_pointer__size, temporary_ref__pointer_kind, temporary_ref__tag);
 

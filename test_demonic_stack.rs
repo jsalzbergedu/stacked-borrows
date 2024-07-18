@@ -18,8 +18,8 @@ const KIND_UNIQUE: StackItemKind = 0;
 const KIND_SHARED_RW: StackItemKind = 1;
 
 type PointerValueKind = u32;
-const KIND_IDENTIFIED : StackItemKind = 0;
-const KIND_NONE: StackItemKind = 1;
+const KIND_IDENTIFIED : PointerValueKind = 0;
+const KIND_NONE: PointerValueKind = 1;
 
 #[cfg(any(kani))]
 fn demonic_nondet() -> bool {
@@ -50,55 +50,48 @@ static mut SSTATE_STACK_KINDS: [StackItemKind; STACK_DEPTH] = [0; STACK_DEPTH];
 static mut SSTATE_STACK_TOPS: usize = 0;
 static mut SSTATE_NEXT_PTR_ID: PointerId = 0;
 
+pub fn new_local<U>(loc: *const U, size: usize) -> PointerId {
+    // switch monitor to this one
+    unsafe {
+        if demonic_nondet() && !SSTATE_MONITOR_ON {
+            SSTATE_MONITOR_ON = true;
+            SSTATE_MONITOR_OBJECT = loc as *const _ as *const u8;
+            // Pick nondeterministically between offset..size
+            SSTATE_MONITOR_OFFSET = 0;
+            let mut i = 0;
+            let mut offset = 0;
+            while i < size { if demonic_nondet() { offset = i }; i += 1; }
+            SSTATE_MONITOR_OFFSET = offset;
+        }
+    }
+    push_unique(loc, size)
+}
+
 pub fn push_shared<U>(ptr: *const U, offset: usize, size: usize) {
     assert!(offset < size);
     unsafe {
-        // switch monitor to this one
-        {
-            if demonic_nondet() {
-                SSTATE_MONITOR_OBJECT = ptr as *const _ as *const u8;
-                SSTATE_MONITOR_ON = true;
-                let mut i = offset;
-                let mut target = offset;
-                while i < size { if demonic_nondet() { target = i }; i += 1; }
-                SSTATE_MONITOR_OFFSET = target;
-            }
-        }
-        {
-            if same_pointer(SSTATE_MONITOR_OBJECT, ptr) && offset <= SSTATE_MONITOR_OFFSET && SSTATE_MONITOR_OFFSET < size && SSTATE_MONITOR_ON {
-                    let top = SSTATE_STACK_TOPS;
-                    assert!(top < STACK_DEPTH);
-                    SSTATE_STACK_TOPS += 1;
-            }
+        if same_pointer(SSTATE_MONITOR_OBJECT, ptr) && offset <= SSTATE_MONITOR_OFFSET && SSTATE_MONITOR_OFFSET < size && SSTATE_MONITOR_ON {
+            let top = SSTATE_STACK_TOPS;
+            assert!(top < STACK_DEPTH);
+            SSTATE_STACK_KINDS[top] = KIND_SHARED_RW;
+            SSTATE_STACK_TOPS += 1;
         }
     }
 }
 
 pub fn push_unique<U>(ptr: *const U, size: usize) -> PointerId {
     unsafe {
-        {
-            if demonic_nondet() {
-                SSTATE_MONITOR_OBJECT = ptr as *const _ as *const u8;
-                SSTATE_MONITOR_ON = true;
-                let mut i = 0;
-                let mut offset = 0;
-                while i < size { if demonic_nondet() { offset = i }; i += 1; }
-                SSTATE_MONITOR_OFFSET = offset;
+        let ptr_id_old = SSTATE_NEXT_PTR_ID;
+        if same_pointer(SSTATE_MONITOR_OBJECT, ptr) &&
+            SSTATE_MONITOR_OFFSET < size && SSTATE_MONITOR_ON  {
+                let top = SSTATE_STACK_TOPS;
+                assert!(top < STACK_DEPTH);
+                SSTATE_STACK_KINDS[top] = KIND_UNIQUE;
+                SSTATE_STACK_IDS[top] = ptr_id_old;
+                SSTATE_STACK_TOPS += 1;
+                SSTATE_NEXT_PTR_ID += 1;
             }
-        }
-        {
-            let ptr_id_old = SSTATE_NEXT_PTR_ID;
-            if same_pointer(SSTATE_MONITOR_OBJECT, ptr) &&
-               SSTATE_MONITOR_OFFSET < size && SSTATE_MONITOR_ON  {
-                        let top = SSTATE_STACK_TOPS;
-                        assert!(top < STACK_DEPTH);
-                        SSTATE_STACK_KINDS[top] = KIND_UNIQUE;
-                        SSTATE_STACK_IDS[top] = ptr_id_old;
-                        SSTATE_STACK_TOPS += 1;
-                        SSTATE_NEXT_PTR_ID += 1;
-            }
-            ptr_id_old
-        }
+        ptr_id_old
     }
 }
 
@@ -285,7 +278,8 @@ fn main() {
     // create a raw pointer to the ref,
     // create the pointer to this.
     let local__pointer_kind = KIND_IDENTIFIED;
-    let local__tag = push_unique(local__pointer, local__size);
+
+    let local__tag = new_local(local__pointer, local__size);
 
     let raw_pointer = &mut local as *mut i32;
     let _temporary_ref__size = std::mem::size_of_val(&local);
